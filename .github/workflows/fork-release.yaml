@@ -1,0 +1,57 @@
+name: Fork release
+
+on:
+  push:
+    tags: ["fishing-v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: echo "version=${GITHUB_REF_NAME#fishing-v}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: unified
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/hami-webui:${{ steps.v.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/hami-webui:latest
+
+  chart:
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Package and push the chart
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.image.outputs.version }}
+        run: |
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sed -i "s#^\(  repository: \)projecthami/hami-webui#\1ghcr.io/${owner}/hami-webui#; s#^\(  tag: \)\"v2.0.0\"#\1\"${VERSION}\"#" charts/hami-webui/values.yaml
+          helm repo add nvidia-dcgm https://nvidia.github.io/dcgm-exporter/helm-charts
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm dependency build charts/hami-webui
+          helm lint charts/hami-webui -f charts/hami-webui/values-mock.yaml
+          helm package charts/hami-webui --version "$VERSION" --app-version "$VERSION" -d dist
+          helm push "dist/hami-webui-${VERSION}.tgz" "oci://ghcr.io/${owner}/charts"
