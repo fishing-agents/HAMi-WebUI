@@ -86,4 +86,7 @@ message Exporter {
   google.protobuf.Duration interval = 1;
   // Hard cap on a single refresh cycle. Defaults to 60s if unset.
   google.protobuf.Duration timeout = 2;
+  // Source of NVIDIA card telemetry: dcgm (default) reads DCGM exporter series;
+  // hami reads HAMi vGPUmonitor hami_host_gpu_* series for clusters without DCGM.
+  string nvidia_telemetry = 3;
 }

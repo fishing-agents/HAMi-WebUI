@@ -30,6 +30,9 @@ const (
 	defaultGenerateTimeout  = 60 * time.Second
 	bytesPerKiB             = 1024
 	bytesPerMiB             = bytesPerKiB * 1024
+
+	nvidiaTelemetryDCGM = "dcgm"
+	nvidiaTelemetryHAMi = "hami"
 )
 
 var (
@@ -85,6 +88,10 @@ type MetricsGenerator struct {
 	interval time.Duration
 	timeout  time.Duration
 
+	// hamiNvidiaTelemetry reads NVIDIA card telemetry from HAMi vGPUmonitor
+	// host series instead of DCGM exporter series.
+	hamiNvidiaTelemetry bool
+
 	log *log.Helper
 
 	startOnce sync.Once
@@ -134,17 +141,41 @@ func NewMetricsGenerator(
 	podUsecase *biz.PodUseCase,
 	monitorService *service.MonitorService,
 	logger log.Logger,
-) *MetricsGenerator {
+) (*MetricsGenerator, error) {
+	hamiNvidiaTelemetry, err := useHAMiNvidiaTelemetry(bc)
+	if err != nil {
+		return nil, err
+	}
 	interval, timeout := resolveCollectorIntervals(bc)
 	return &MetricsGenerator{
-		promClient:     promClient,
-		nodeUsecase:    nodeUsecase,
-		podUsecase:     podUsecase,
-		monitorService: monitorService,
-		interval:       interval,
-		timeout:        timeout,
-		log:            log.NewHelper(log.With(logger, "module", "exporter")),
+		promClient:          promClient,
+		nodeUsecase:         nodeUsecase,
+		podUsecase:          podUsecase,
+		monitorService:      monitorService,
+		interval:            interval,
+		timeout:             timeout,
+		hamiNvidiaTelemetry: hamiNvidiaTelemetry,
+		log:                 log.NewHelper(log.With(logger, "module", "exporter")),
+	}, nil
+}
+
+func useHAMiNvidiaTelemetry(bc *conf.Bootstrap) (bool, error) {
+	switch source := bc.GetExporter().GetNvidiaTelemetry(); source {
+	case "", nvidiaTelemetryDCGM:
+		return false, nil
+	case nvidiaTelemetryHAMi:
+		return true, nil
+	default:
+		return false, fmt.Errorf("exporter.nvidia_telemetry %q: want %q or %q", source, nvidiaTelemetryDCGM, nvidiaTelemetryHAMi)
 	}
+}
+
+func (s *MetricsGenerator) hamiTelemetry(provider string) bool {
+	return s.hamiNvidiaTelemetry && provider == biz.NvidiaGPUDevice
+}
+
+func hamiHostQuery(metric, deviceUUID string) string {
+	return fmt.Sprintf("avg(%s{device_uuid=%q})", metric, deviceUUID)
 }
 
 func resolveCollectorIntervals(bc *conf.Bootstrap) (interval, timeout time.Duration) {
@@ -351,7 +382,14 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		if memoryUsedErr == nil {
 			s.set(HamiMemoryUsed, float64(deviceMemUsed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
-		deviceMemSize, memorySizeErr := s.deviceMemTotal(ctx, provider, device.Id)
+		var deviceMemSize float32
+		var memorySizeErr error
+		if s.hamiTelemetry(provider) {
+			// vGPUmonitor exports no capacity series; use the registered device memory.
+			deviceMemSize = float32(device.Devmem)
+		} else {
+			deviceMemSize, memorySizeErr = s.deviceMemTotal(ctx, provider, device.Id)
+		}
 		if memorySizeErr == nil && deviceMemSize > 0 {
 			s.set(HamiMemorySize, float64(deviceMemSize), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			if !device.Unconfigured {
@@ -604,6 +642,10 @@ func (s *MetricsGenerator) queryRequiredInstantVal(ctx context.Context, query st
 }
 
 func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUUID string) (float32, error) {
+	if s.hamiTelemetry(provider) {
+		val, err := s.queryRequiredInstantVal(ctx, hamiHostQuery("hami_host_gpu_memory_used_bytes", deviceUUID))
+		return val / bytesPerMiB, err
+	}
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -665,6 +707,9 @@ func deviceMemoryToMiB(provider string, value float32) float32 {
 }
 
 func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceUUID string) (float32, error) {
+	if s.hamiTelemetry(provider) {
+		return s.queryRequiredInstantVal(ctx, hamiHostQuery("hami_host_gpu_utilization_ratio", deviceUUID))
+	}
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -814,6 +859,9 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 }
 
 func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceUUID string) (float32, error) {
+	if s.hamiTelemetry(provider) {
+		return s.queryRequiredInstantVal(ctx, hamiHostQuery("hami_host_gpu_temperature_celsius", deviceUUID))
+	}
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -835,6 +883,9 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 }
 
 func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, deviceUUID string) (float32, error) {
+	if s.hamiTelemetry(provider) {
+		return 0, fmt.Errorf("%w: memory temperature for HAMi NVIDIA telemetry", errTelemetryUnsupported)
+	}
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -854,6 +905,9 @@ func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, devi
 }
 
 func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID string) (float32, error) {
+	if s.hamiTelemetry(provider) {
+		return s.queryRequiredInstantVal(ctx, hamiHostQuery("hami_host_gpu_power_usage_watts", deviceUUID))
+	}
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -880,6 +934,9 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 }
 
 func (s *MetricsGenerator) lastXIDErrorCode(ctx context.Context, provider, deviceUUID string) (float32, error) {
+	if s.hamiTelemetry(provider) {
+		return 0, fmt.Errorf("%w: last XID error code for HAMi NVIDIA telemetry", errTelemetryUnsupported)
+	}
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -891,6 +948,9 @@ func (s *MetricsGenerator) lastXIDErrorCode(ctx context.Context, provider, devic
 }
 
 func (s *MetricsGenerator) fanSpeed(ctx context.Context, provider, deviceUUID string) (float32, error) {
+	if s.hamiTelemetry(provider) {
+		return 0, errFanSpeedTelemetryUnsupported
+	}
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -916,6 +976,9 @@ type DeviceAdditionalInfo struct {
 }
 
 func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, deviceUUID string) (*DeviceAdditionalInfo, error) {
+	if s.hamiTelemetry(provider) {
+		return nil, fmt.Errorf("%w: device details for HAMi NVIDIA telemetry", errTelemetryUnsupported)
+	}
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:

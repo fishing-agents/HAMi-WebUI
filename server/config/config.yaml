@@ -11,6 +11,8 @@ prometheus:
 exporter:
   interval: 30s
   timeout: 60s
+  # NVIDIA card telemetry source: dcgm (DCGM exporter) or hami (HAMi vGPUmonitor).
+  nvidia_telemetry: dcgm
 node_selectors:
   NVIDIA: gpu=on
   Ascend: ascend=on
