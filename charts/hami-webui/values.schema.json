@@ -230,6 +230,15 @@
           "enum": ["unknown", "node", "template"]
         }
       }
+    },
+    "metricsExporter": {
+      "type": "object",
+      "properties": {
+        "nvidiaTelemetry": {
+          "type": "string",
+          "enum": ["dcgm", "hami"]
+        }
+      }
     }
   },
   "definitions": {

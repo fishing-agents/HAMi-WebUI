@@ -136,6 +136,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | kube-prometheus-stack.prometheusOperator.enabled | bool | `false`                                                                            |  |
 | metricsExporter.interval | string | `"30s"` | Interval between background metric refreshes. |
 | metricsExporter.timeout | string | `"60s"` | Hard timeout for one background metric refresh. |
+| metricsExporter.nvidiaTelemetry | string | `"dcgm"` | NVIDIA card telemetry source: `dcgm` (dcgm-exporter) or `hami` (HAMi vGPUmonitor `hami_host_gpu_*` series). |
 | nameOverride | string | `""`                                                                               |  |
 | namespaceOverride | string | `""`                                                                               |  |
 | nodeSelector | object | `{}`                                                                               |  |
@@ -200,6 +201,21 @@ dcgm-exporter:
 ```
 This ensures that the existing `dcgm-exporter` instance is used, preventing conflicts.
 
+On clusters without DCGM, such as those running HAMi's mock device plugin with
+hami-mock-monitor, read NVIDIA card telemetry from HAMi's `hami_host_gpu_*`
+series instead. [values-mock.yaml](values-mock.yaml) disables `dcgm-exporter`
+and `hamiServiceMonitor` and sets:
+
+```yaml
+metricsExporter:
+  nvidiaTelemetry: "hami"
+```
+
+Memory capacity then comes from the registered device memory, and fan speed,
+XID errors, memory temperature, driver version and device number stay empty.
+The ServiceMonitor that scrapes hami-mock-monitor must set `honorLabels: true`
+so workload `namespace`, `pod` and `container` labels are not renamed to
+`exported_*`.
 
 ### 2. About `Prometheus`
 

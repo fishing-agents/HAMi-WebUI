@@ -53,6 +53,7 @@ data:
     exporter:
       interval: {{ .Values.metricsExporter.interval | default "30s" }}
       timeout:  {{ .Values.metricsExporter.timeout  | default "60s" }}
+      nvidia_telemetry: {{ .Values.metricsExporter.nvidiaTelemetry | default "dcgm" | quote }}
     {{- with (get $scheduling "resourceNames") }}
     scheduling:
       resource_names:

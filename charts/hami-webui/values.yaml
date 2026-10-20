@@ -263,6 +263,12 @@ metricsExporter:
   interval: "30s"
   # Hard cap on a single refresh cycle. Should be >= externalPrometheus.timeout and < interval * 2.
   timeout: "60s"
+  # NVIDIA card telemetry source. dcgm reads dcgm-exporter series; hami reads
+  # HAMi vGPUmonitor hami_host_gpu_* series for clusters without DCGM, such as
+  # mock device plugin clusters. In hami mode memory capacity comes from the
+  # registered device memory; fan, XID, memory temperature, driver version and
+  # device number stay empty. See values-mock.yaml.
+  nvidiaTelemetry: "dcgm"
 
 # The browser API timeout (default 60000ms) is compiled into the JavaScript
 # bundle from VITE_APP_REQUEST_TIMEOUT. Changing it requires rebuilding the

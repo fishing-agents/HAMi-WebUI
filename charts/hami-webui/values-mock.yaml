@@ -1,0 +1,21 @@
+# Values for clusters running HAMi's mock device plugin with hami-mock-monitor,
+# where NVIDIA's dcgm-exporter does not exist. Combine with a Prometheus mode:
+#   helm install hami-webui ./charts/hami-webui -f values-mock.yaml \
+#     --set externalPrometheus.enabled=true \
+#     --set externalPrometheus.address=http://prometheus.monitoring.svc:9090
+
+# No real GPUs, so no DCGM exporter or its ServiceMonitor.
+dcgm-exporter:
+  enabled: false
+
+# Card memory, utilization, temperature and power come from the
+# hami_host_gpu_* series that hami-mock-monitor exports.
+metricsExporter:
+  nvidiaTelemetry: "hami"
+
+# This monitor selects the HAMi device plugin Service, which a mock cluster
+# does not run. The cluster's own ServiceMonitor for hami-mock-monitor must
+# set honorLabels: true so the namespace/pod/container workload labels are
+# kept instead of being renamed to exported_*.
+hamiServiceMonitor:
+  enabled: false
