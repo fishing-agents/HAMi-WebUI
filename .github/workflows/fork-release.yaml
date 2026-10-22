@@ -46,12 +46,12 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.image.outputs.version }}
         run: |
-          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          export OWNER="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          sed -i "s#^\(  repository: \)projecthami/hami-webui#\1ghcr.io/${owner}/hami-webui#; s#^\(  tag: \)\"v2.0.0\"#\1\"${VERSION}\"#" charts/hami-webui/values.yaml
+          yq -i '.image.repository = "ghcr.io/" + strenv(OWNER) + "/hami-webui" | .image.tag = strenv(VERSION) | .image.digest = ""' charts/hami-webui/values.yaml
           helm repo add nvidia-dcgm https://nvidia.github.io/dcgm-exporter/helm-charts
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm dependency build charts/hami-webui
           helm lint charts/hami-webui -f charts/hami-webui/values-mock.yaml
           helm package charts/hami-webui --version "$VERSION" --app-version "$VERSION" -d dist
-          helm push "dist/hami-webui-${VERSION}.tgz" "oci://ghcr.io/${owner}/charts"
+          helm push "dist/hami-webui-${VERSION}.tgz" "oci://ghcr.io/${OWNER}/charts"
